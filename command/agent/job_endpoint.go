@@ -1270,6 +1270,7 @@ func ApiTaskToStructsTask(job *structs.Job, group *structs.TaskGroup,
 	structsTask.Constraints = ApiConstraintsToStructs(apiTask.Constraints)
 	structsTask.Affinities = ApiAffinitiesToStructs(apiTask.Affinities)
 	structsTask.CSIPluginConfig = ApiCSIPluginConfigToStructsCSIPluginConfig(apiTask.CSIPluginConfig)
+	structsTask.IngressPluginConfig = ApiIngressPluginConfigToStructsConfig(apiTask.IngressPluginConfig)
 
 	// Nomad 1.5 CLIs and JSON jobs may set the default identity parameters in
 	// the Task.Identity field, so if it is non-nil use it.
@@ -1440,6 +1441,29 @@ func ApiCSIPluginConfigToStructsCSIPluginConfig(apiConfig *api.TaskCSIPluginConf
 	sc.MountDir = apiConfig.MountDir
 	sc.StagePublishBaseDir = apiConfig.StagePublishBaseDir
 	sc.HealthTimeout = apiConfig.HealthTimeout
+	return sc
+}
+
+func ApiIngressPluginConfigToStructsConfig(apiConfig *api.TaskIngressPluginConfig) *structs.TaskIngressPluginConfig {
+	if apiConfig == nil {
+		return nil
+	}
+	sc := &structs.TaskIngressPluginConfig{
+		ID:            apiConfig.ID,
+		NomadEndpoint: apiConfig.NomadEndpoint,
+		NomadToken:    apiConfig.NomadToken,
+		Class:         structs.IngressClass(apiConfig.Class),
+	}
+	if apiConfig.Internal != nil {
+		sc.Internal = &structs.InternalIngressClassConfig{
+			LoadBalancerConfigurationPath: apiConfig.Internal.LoadBalancerConfigurationPath,
+		}
+	}
+
+	// TODO add after filling external
+	if apiConfig.External != nil {
+		sc.External = &structs.ExternalIngressClassConfig{}
+	}
 	return sc
 }
 

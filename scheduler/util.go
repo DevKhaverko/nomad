@@ -298,6 +298,9 @@ func tasksUpdated(jobA, jobB *structs.Job, taskGroup string) comparison {
 		if !at.CSIPluginConfig.Equal(bt.CSIPluginConfig) {
 			return difference("task csi config", at.CSIPluginConfig, bt.CSIPluginConfig)
 		}
+		if !at.IngressPluginConfig.Equal(bt.IngressPluginConfig) {
+			return difference("task ingress config", at.IngressPluginConfig, bt.IngressPluginConfig)
+		}
 		if !slices.EqualFunc(at.VolumeMounts, bt.VolumeMounts, func(a, b *structs.VolumeMount) bool { return a.Equal(b) }) {
 			return difference("task volume mount", at.VolumeMounts, bt.VolumeMounts)
 		}

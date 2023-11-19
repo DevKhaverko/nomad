@@ -90,6 +90,10 @@
         "path": "concepts/architecture"
       },
       {
+        "title": "CPU",
+        "path": "concepts/cpu"
+      },
+      {
         "title": "Plugins",
         "routes": [
           {
@@ -2291,6 +2295,10 @@
           {
             "title": "Overview",
             "path": "enterprise/license"
+          },
+          {
+            "title": "Automated license utilization reporting",
+            "path": "enterprise/license/utilization-reporting"
           },
           {
             "title": "FAQ",

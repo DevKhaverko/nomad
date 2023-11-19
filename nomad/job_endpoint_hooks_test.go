@@ -33,7 +33,7 @@ func Test_jobValidate_Validate_consul_service(t *testing.T) {
 				Name:     "web",
 			},
 			inputConfig: &Config{
-				ConsulConfig: &config.ConsulConfig{},
+				ConsulConfigs: map[string]*config.ConsulConfig{},
 			},
 		},
 		{
@@ -43,10 +43,12 @@ func Test_jobValidate_Validate_consul_service(t *testing.T) {
 				Name:     "web",
 			},
 			inputConfig: &Config{
-				ConsulConfig: &config.ConsulConfig{
-					ServiceIdentity: &config.WorkloadIdentityConfig{
-						Audience: []string{"consul.io"},
-						TTL:      pointer.Of(time.Hour),
+				ConsulConfigs: map[string]*config.ConsulConfig{
+					structs.ConsulDefaultCluster: {
+						ServiceIdentity: &config.WorkloadIdentityConfig{
+							Audience: []string{"consul.io"},
+							TTL:      pointer.Of(time.Hour),
+						},
 					},
 				},
 			},
@@ -66,7 +68,7 @@ func Test_jobValidate_Validate_consul_service(t *testing.T) {
 				},
 			},
 			inputConfig: &Config{
-				ConsulConfig: &config.ConsulConfig{},
+				ConsulConfigs: map[string]*config.ConsulConfig{},
 			},
 		},
 		{
@@ -83,7 +85,7 @@ func Test_jobValidate_Validate_consul_service(t *testing.T) {
 				},
 			},
 			inputConfig: &Config{
-				ConsulConfig: &config.ConsulConfig{},
+				ConsulConfigs: map[string]*config.ConsulConfig{},
 			},
 			expectedWarns: []string{
 				"identities without an expiration are insecure",
@@ -468,9 +470,9 @@ func Test_jobImpliedConstraints_Mutate(t *testing.T) {
 							},
 						},
 						Constraints: []*structs.Constraint{
-							&structs.Constraint{
+							{
 								LTarget: "${attr.vault.infra.version}",
-								RTarget: ">= 0.6.1",
+								RTarget: ">= 1.11.0",
 								Operand: structs.ConstraintSemver,
 							},
 							vaultConstraint,
@@ -1024,7 +1026,7 @@ func Test_jobImpliedConstraints_Mutate(t *testing.T) {
 							consulServiceDiscoveryConstraint,
 							&structs.Constraint{
 								LTarget: "${attr.consul.infra.version}",
-								RTarget: ">= 1.7.0",
+								RTarget: ">= 1.8.0",
 								Operand: structs.ConstraintSemver,
 							},
 						},

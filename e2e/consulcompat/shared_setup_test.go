@@ -50,7 +50,7 @@ func startConsul(t *testing.T, b build, baseDir, ns string) (string, *consulapi.
 			}
 			c.Datacenter = consulDC1
 			c.DataDir = t.TempDir()
-			c.LogLevel = "debug"
+			c.LogLevel = testlog.HCLoggerTestLevel().String()
 			c.Connect = map[string]any{"enabled": true}
 			c.Server = true
 
@@ -94,7 +94,7 @@ func startNomad(t *testing.T, consulConfig *testutil.Consul) *nomadapi.Client {
 		c.DevMode = true
 		c.DevConnectMode = true
 		c.LogLevel = testlog.HCLoggerTestLevel().String()
-		c.Consul = consulConfig
+		c.Consuls = []*testutil.Consul{consulConfig}
 		c.ACL = &testutil.ACLConfig{
 			Enabled:        true,
 			BootstrapToken: rootToken,

@@ -171,7 +171,7 @@ func (h *vaultHook) Prestart(ctx context.Context, req *interfaces.TaskPrestartRe
 		return nil
 	}
 
-	cluster := h.vaultBlock.Cluster
+	cluster := h.task.GetVaultClusterName()
 	vclient, err := h.clientFunc(cluster)
 	if err != nil {
 		return err
@@ -328,9 +328,9 @@ OUTER:
 				const noFailure = false
 				h.lifecycle.Restart(h.ctx,
 					structs.NewTaskEvent(structs.TaskRestartSignal).
-						SetDisplayMessage("Vault: new Vault token acquired"), false)
+						SetDisplayMessage("Vault: new Vault token acquired"), noFailure)
 			case structs.VaultChangeModeNoop:
-				fallthrough
+				// True to its name, this is a noop!
 			default:
 				h.logger.Error("invalid Vault change mode", "mode", h.vaultBlock.ChangeMode)
 			}
@@ -431,8 +431,9 @@ func (h *vaultHook) deriveVaultTokenJWT() (string, error) {
 
 	// Derive Vault token with signed identity.
 	token, err := h.client.DeriveTokenWithJWT(h.ctx, vaultclient.JWTLoginRequest{
-		JWT:  signed.JWT,
-		Role: role,
+		JWT:       signed.JWT,
+		Role:      role,
+		Namespace: h.vaultBlock.Namespace,
 	})
 	if err != nil {
 		return "", structs.WrapRecoverable(

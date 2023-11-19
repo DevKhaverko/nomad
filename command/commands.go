@@ -1031,6 +1031,21 @@ func Commands(metaPtr *Meta, agentUi cli.Ui) map[string]cli.CommandFactory {
 				Meta: meta,
 			}, nil
 		},
+		"setup": func() (cli.Command, error) {
+			return &SetupCommand{
+				Meta: meta,
+			}, nil
+		},
+		"setup consul": func() (cli.Command, error) {
+			return &SetupConsulCommand{
+				Meta: meta,
+			}, nil
+		},
+		"setup vault": func() (cli.Command, error) {
+			return &SetupVaultCommand{
+				Meta: meta,
+			}, nil
+		},
 		"status": func() (cli.Command, error) {
 			return &StatusCommand{
 				Meta: meta,

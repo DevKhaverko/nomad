@@ -2779,6 +2779,16 @@ func TestJobs_ApiJobToStructsJob(t *testing.T) {
 								Weight:  pointer.Of(int8(50)),
 							},
 						},
+						Identities: []*api.WorkloadIdentity{
+							{
+								Name:         "aws",
+								Audience:     []string{"s3"},
+								Env:          true,
+								File:         true,
+								ChangeMode:   "signal",
+								ChangeSignal: "SIGHUP",
+							},
+						},
 						VolumeMounts: []*api.VolumeMount{
 							{
 								Volume:          pointer.Of("vol"),
@@ -3194,6 +3204,16 @@ func TestJobs_ApiJobToStructsJob(t *testing.T) {
 								RTarget: "b",
 								Operand: "c",
 								Weight:  50,
+							},
+						},
+						Identities: []*structs.WorkloadIdentity{
+							{
+								Name:         "aws",
+								Audience:     []string{"s3"},
+								Env:          true,
+								File:         true,
+								ChangeMode:   "signal",
+								ChangeSignal: "SIGHUP",
 							},
 						},
 						Env: map[string]string{
@@ -4230,7 +4250,9 @@ func TestConversion_ApiConsulConnectToStructs(t *testing.T) {
 
 func Test_apiWorkloadIdentityToStructs(t *testing.T) {
 	ci.Parallel(t)
+
 	must.Nil(t, apiWorkloadIdentityToStructs(nil))
+
 	must.Eq(t, &structs.WorkloadIdentity{
 		Name:        "consul/test",
 		Audience:    []string{"consul.io"},
@@ -4243,5 +4265,23 @@ func Test_apiWorkloadIdentityToStructs(t *testing.T) {
 		Env:         false,
 		File:        false,
 		ServiceName: "web",
+	}))
+
+	must.Eq(t, &structs.WorkloadIdentity{
+		Name:         "aws",
+		Audience:     []string{"s3"},
+		Env:          true,
+		File:         true,
+		ChangeMode:   "signal",
+		ChangeSignal: "SIGHUP",
+		TTL:          2 * time.Hour,
+	}, apiWorkloadIdentityToStructs(&api.WorkloadIdentity{
+		Name:         "aws",
+		Audience:     []string{"s3"},
+		Env:          true,
+		File:         true,
+		ChangeMode:   "signal",
+		ChangeSignal: "SIGHUP",
+		TTL:          2 * time.Hour,
 	}))
 }

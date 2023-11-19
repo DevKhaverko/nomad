@@ -24,7 +24,7 @@ import (
 // changes
 const (
 	binDir           = "consul-bins"
-	minConsulVersion = "1.15.0"
+	minConsulVersion = "1.16.0"
 
 	// environment variable to pick only one Consul version for testing
 	exactConsulVersionEnv = "NOMAD_E2E_CONSULCOMPAT_CONSUL_VERSION"
@@ -73,19 +73,6 @@ type consulJSON struct {
 	Versions map[string]struct {
 		Builds []build `json:"builds"`
 	} `json:"versions"`
-}
-
-func usable(v, minimum *version.Version) bool {
-	switch {
-	case v.Prerelease() != "":
-		return false
-	case v.Metadata() != "":
-		return false
-	case v.LessThan(minimum):
-		return false
-	default:
-		return true
-	}
 }
 
 func keep(b build) bool {

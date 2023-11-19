@@ -698,32 +698,33 @@ func (l *TaskLifecycle) Empty() bool {
 
 // Task is a single process in a task group.
 type Task struct {
-	Name            string                 `hcl:"name,label"`
-	Driver          string                 `hcl:"driver,optional"`
-	User            string                 `hcl:"user,optional"`
-	Lifecycle       *TaskLifecycle         `hcl:"lifecycle,block"`
-	Config          map[string]interface{} `hcl:"config,block"`
-	Constraints     []*Constraint          `hcl:"constraint,block"`
-	Affinities      []*Affinity            `hcl:"affinity,block"`
-	Env             map[string]string      `hcl:"env,block"`
-	Services        []*Service             `hcl:"service,block"`
-	Resources       *Resources             `hcl:"resources,block"`
-	RestartPolicy   *RestartPolicy         `hcl:"restart,block"`
-	Meta            map[string]string      `hcl:"meta,block"`
-	KillTimeout     *time.Duration         `mapstructure:"kill_timeout" hcl:"kill_timeout,optional"`
-	LogConfig       *LogConfig             `mapstructure:"logs" hcl:"logs,block"`
-	Artifacts       []*TaskArtifact        `hcl:"artifact,block"`
-	Vault           *Vault                 `hcl:"vault,block"`
-	Consul          *Consul                `hcl:"consul,block"`
-	Templates       []*Template            `hcl:"template,block"`
-	DispatchPayload *DispatchPayloadConfig `hcl:"dispatch_payload,block"`
-	VolumeMounts    []*VolumeMount         `hcl:"volume_mount,block"`
-	CSIPluginConfig *TaskCSIPluginConfig   `mapstructure:"csi_plugin" json:",omitempty" hcl:"csi_plugin,block"`
-	Leader          bool                   `hcl:"leader,optional"`
-	ShutdownDelay   time.Duration          `mapstructure:"shutdown_delay" hcl:"shutdown_delay,optional"`
-	KillSignal      string                 `mapstructure:"kill_signal" hcl:"kill_signal,optional"`
-	Kind            string                 `hcl:"kind,optional"`
-	ScalingPolicies []*ScalingPolicy       `hcl:"scaling,block"`
+	Name                string                   `hcl:"name,label"`
+	Driver              string                   `hcl:"driver,optional"`
+	User                string                   `hcl:"user,optional"`
+	Lifecycle           *TaskLifecycle           `hcl:"lifecycle,block"`
+	Config              map[string]interface{}   `hcl:"config,block"`
+	Constraints         []*Constraint            `hcl:"constraint,block"`
+	Affinities          []*Affinity              `hcl:"affinity,block"`
+	Env                 map[string]string        `hcl:"env,block"`
+	Services            []*Service               `hcl:"service,block"`
+	Resources           *Resources               `hcl:"resources,block"`
+	RestartPolicy       *RestartPolicy           `hcl:"restart,block"`
+	Meta                map[string]string        `hcl:"meta,block"`
+	KillTimeout         *time.Duration           `mapstructure:"kill_timeout" hcl:"kill_timeout,optional"`
+	LogConfig           *LogConfig               `mapstructure:"logs" hcl:"logs,block"`
+	Artifacts           []*TaskArtifact          `hcl:"artifact,block"`
+	Vault               *Vault                   `hcl:"vault,block"`
+	Consul              *Consul                  `hcl:"consul,block"`
+	Templates           []*Template              `hcl:"template,block"`
+	DispatchPayload     *DispatchPayloadConfig   `hcl:"dispatch_payload,block"`
+	VolumeMounts        []*VolumeMount           `hcl:"volume_mount,block"`
+	CSIPluginConfig     *TaskCSIPluginConfig     `mapstructure:"csi_plugin" json:",omitempty" hcl:"csi_plugin,block"`
+	IngressPluginConfig *TaskIngressPluginConfig `mapstructure:"ingress_plugin" json:",omitempty" hcl:"ingress_plugin,block"`
+	Leader              bool                     `hcl:"leader,optional"`
+	ShutdownDelay       time.Duration            `mapstructure:"shutdown_delay" hcl:"shutdown_delay,optional"`
+	KillSignal          string                   `mapstructure:"kill_signal" hcl:"kill_signal,optional"`
+	Kind                string                   `hcl:"kind,optional"`
+	ScalingPolicies     []*ScalingPolicy         `hcl:"scaling,block"`
 
 	// Identity is the default Nomad Workload Identity and will be added to
 	// Identities with the name "default"
@@ -1174,4 +1175,55 @@ type Action struct {
 	Name    string   `hcl:"name,label"`
 	Command string   `mapstructure:"command" hcl:"command"`
 	Args    []string `mapstructure:"args" hcl:"args,optional"`
+}
+
+// IngressClass is an enum string that encapsulates the valid options for a
+// Ingress Plugin block's Type. These modes will allow the plugin to be used in
+// different ways by the client.
+type IngressClass string
+
+const (
+	// InternalIngressClass indicates that load balancer is inside nomad cluster
+	InternalIngressClass IngressClass = "internal"
+	// ExternalIngressClass indicates that load balancer is outside nomad cluster
+	ExternalIngressClass IngressClass = "external"
+)
+
+// TaskIngressPluginConfig contains the data that is required to setup a task as a
+// Ingress plugin. This will be used by the ingress_plugin_supervisor_hook to initiate the connection to the plugin catalog.
+type TaskIngressPluginConfig struct {
+	ID string `mapstructure:"id" hcl:"id,optional"`
+	// Nomad server URL to which controller should make requests
+	NomadEndpoint string `mapstructure:"nomad_endpoint" hcl:"nomad_endpoint"`
+	// Nomad token to access Nomad API
+	NomadToken string                      `mapstructure:"nomad_token" hcl:"nomad_token"`
+	Class      IngressClass                `mapstructure:"class" hcl:"class"`
+	Internal   *InternalIngressClassConfig `mapstructure:"internal" hcl:"internal,optional"`
+	External   *ExternalIngressClassConfig `mapstructure:"external" hcl:"external,optional"`
+}
+
+// InternalIngressClassConfig contains parameters for ingress controller
+// which manages load balancer inside nomad cluster
+type InternalIngressClassConfig struct {
+	LoadBalancerConfigurationPath string `mapstructure:"lb_conf_path" hcl:"lb_conf_path"`
+}
+
+// ExternalIngressClassConfig contains parameters for ingress controller
+// which manages load balancer outside nomad cluster
+type ExternalIngressClassConfig struct {
+}
+
+func (t *TaskIngressPluginConfig) Canonicalize() {
+	if t.Internal == nil && t.External == nil {
+		t.Class = InternalIngressClass
+		t.Internal = &InternalIngressClassConfig{
+			LoadBalancerConfigurationPath: "/lb",
+		}
+	}
+
+	if t.Internal != nil {
+		if t.Internal.LoadBalancerConfigurationPath == "" {
+			t.Internal.LoadBalancerConfigurationPath = "/lb"
+		}
+	}
 }

@@ -7537,6 +7537,9 @@ type Task struct {
 	// CSIPluginConfig is used to configure the plugin supervisor for the task.
 	CSIPluginConfig *TaskCSIPluginConfig
 
+	// IngressPluginConfig is used to configure plugin supervisor for the task
+	IngressPluginConfig *TaskIngressPluginConfig
+
 	// Identity is the default Nomad Workload Identity.
 	Identity *WorkloadIdentity
 

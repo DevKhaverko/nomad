@@ -923,3 +923,40 @@ func TestTaskGroup_Canonicalize_Consul(t *testing.T) {
 		must.Eq(t, "ns2", tg.Consul.Namespace)
 	})
 }
+
+func TestTask_Canonicalize_IngressPluginConfig(t *testing.T) {
+	testutil.Parallel(t)
+	t.Run("set internal", func(t *testing.T) {
+		conf := &TaskIngressPluginConfig{
+			NomadEndpoint: "my-server",
+			NomadToken:    "my-token",
+			Internal: &InternalIngressClassConfig{
+				LoadBalancerConfigurationPath: "/opt/envoy",
+			},
+		}
+		conf.Canonicalize()
+
+		must.Eq(t, "/opt/envoy", conf.Internal.LoadBalancerConfigurationPath)
+	})
+
+	t.Run("set empty lb_conf_path", func(t *testing.T) {
+		conf := &TaskIngressPluginConfig{
+			NomadEndpoint: "my-server",
+			NomadToken:    "my-token",
+			Internal:      &InternalIngressClassConfig{},
+		}
+		conf.Canonicalize()
+
+		must.Eq(t, "/lb", conf.Internal.LoadBalancerConfigurationPath)
+	})
+
+	t.Run("not set internal, external", func(t *testing.T) {
+		conf := &TaskIngressPluginConfig{
+			NomadEndpoint: "my-server",
+			NomadToken:    "my-token",
+		}
+		conf.Canonicalize()
+
+		must.Eq(t, "/lb", conf.Internal.LoadBalancerConfigurationPath)
+	})
+}

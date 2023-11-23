@@ -88,6 +88,18 @@ func (tr *TaskRunner) initHooks() {
 			}))
 	}
 
+	if task.IngressPluginConfig != nil {
+		tr.runnerHooks = append(tr.runnerHooks, newIngressPluginSupervisorHook(
+			&ingressPluginSupervisorHookConfig{
+				events:     tr,
+				runner:     tr,
+				lifecycle:  tr,
+				lbConfPath: task.IngressPluginConfig.Internal.LoadBalancerConfigurationPath,
+				logger:     hookLogger,
+			}),
+		)
+	}
+
 	// If Vault is enabled, add the hook
 	if task.Vault != nil && tr.vaultClientFunc != nil {
 		tr.runnerHooks = append(tr.runnerHooks, newVaultHook(&vaultHookConfig{

@@ -86,6 +86,7 @@ func init() {
 		clusterMetaTableSchema,
 		csiVolumeTableSchema,
 		csiPluginTableSchema,
+		ingressPluginTableSchema,
 		scalingPolicyTableSchema,
 		scalingEventTableSchema,
 		namespaceTableSchema,
@@ -1165,6 +1166,22 @@ func csiVolumeTableSchema() *memdb.TableSchema {
 func csiPluginTableSchema() *memdb.TableSchema {
 	return &memdb.TableSchema{
 		Name: "csi_plugins",
+		Indexes: map[string]*memdb.IndexSchema{
+			"id": {
+				Name:         "id",
+				AllowMissing: false,
+				Unique:       true,
+				Indexer: &memdb.StringFieldIndex{
+					Field: "ID",
+				},
+			},
+		},
+	}
+}
+
+func ingressPluginTableSchema() *memdb.TableSchema {
+	return &memdb.TableSchema{
+		Name: "ingress_plugins",
 		Indexes: map[string]*memdb.IndexSchema{
 			"id": {
 				Name:         "id",

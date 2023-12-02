@@ -187,6 +187,13 @@ func (r *StateRestore) CSIPluginRestore(plugin *structs.CSIPlugin) error {
 	return nil
 }
 
+func (r *StateRestore) IngressPluginRestore(plugin *structs.IngressPlugin) error {
+	if err := r.txn.Insert("ingress_plugins", plugin); err != nil {
+		return fmt.Errorf("csi plugin insert failed: %v", err)
+	}
+	return nil
+}
+
 // CSIVolumeRestore is used to restore a CSI volume
 func (r *StateRestore) CSIVolumeRestore(volume *structs.CSIVolume) error {
 	if err := r.txn.Insert("csi_volumes", volume); err != nil {

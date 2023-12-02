@@ -1,5 +1,7 @@
 package structs
 
+import "fmt"
+
 // IngressClass is an enum string that encapsulates the valid options for a
 // Ingress Plugin block's Type. These modes will allow the plugin to be used in
 // different ways by the client.
@@ -10,6 +12,7 @@ const (
 	InternalIngressClass IngressClass = "internal"
 	// ExternalIngressClass indicates that load balancer is outside nomad cluster
 	ExternalIngressClass IngressClass = "external"
+	IngresPluginType     string       = "ingress"
 )
 
 // TaskIngressPluginConfig contains the data that is required to setup a task as a
@@ -79,4 +82,165 @@ func (e *ExternalIngressClassConfig) Equal(o *ExternalIngressClassConfig) bool {
 		return e == o
 	}
 	return true
+}
+
+type IngressPlugin struct {
+	ID       string
+	Provider string
+	Version  string
+
+	Controllers map[string]*IngressInfo
+
+	// Allocations are populated by denormalize to show running allocations
+	Allocations []*AllocListStub
+
+	// Jobs are populated to by job update to support expected counts and the UI
+	ControllerJobs JobDescriptions
+
+	// Cache the count of healthy plugins
+	ControllersHealthy  int
+	ControllersExpected int
+
+	CreateIndex uint64
+	ModifyIndex uint64
+}
+
+func NewIngressPlugin(id string, index uint64) *IngressPlugin {
+	out := &IngressPlugin{
+		ID:          id,
+		CreateIndex: index,
+		ModifyIndex: index,
+	}
+
+	out.newStructs()
+	return out
+}
+
+func (i *IngressPlugin) newStructs() {
+	i.Controllers = map[string]*IngressInfo{}
+	i.ControllerJobs = make(JobDescriptions)
+}
+
+func (i *IngressPlugin) Copy() *IngressPlugin {
+	copy := *i
+	out := &copy
+	out.newStructs()
+
+	for k, v := range i.Controllers {
+		out.Controllers[k] = v.Copy()
+	}
+
+	for k, v := range i.ControllerJobs {
+		out.ControllerJobs[k] = v.Copy()
+	}
+
+	return out
+}
+
+func (i *IngressPlugin) AddPlugin(nodeID string, info *IngressInfo) error {
+	prev, ok := i.Controllers[nodeID]
+	if ok {
+		if prev == nil {
+			return fmt.Errorf("plugin missing node: %s", nodeID)
+		}
+		if prev.Healthy {
+			i.ControllersHealthy -= 1
+		}
+	}
+	if prev != nil || info.Healthy {
+		i.Controllers[nodeID] = info
+	}
+	if info.Healthy {
+		i.ControllersHealthy += 1
+	}
+	return nil
+}
+
+func (i *IngressPlugin) IsEmpty() bool {
+	return i == nil ||
+		len(i.Controllers) == 0 &&
+			i.ControllerJobs.Count() == 0
+}
+
+func (i *IngressPlugin) DeleteNodeForType(nodeID string) error {
+	if prev, ok := i.Controllers[nodeID]; ok {
+		if prev == nil {
+			return fmt.Errorf("plugin missing controller: %s", nodeID)
+		}
+		if prev.Healthy {
+			i.ControllersHealthy--
+		}
+		delete(i.Controllers, nodeID)
+	}
+	return nil
+}
+
+func (i *IngressPlugin) DeleteAlloc(allocID, nodeID string) error {
+	prev, ok := i.Controllers[nodeID]
+	if ok {
+		if prev == nil {
+			return fmt.Errorf("plugin missing controller: %s", nodeID)
+		}
+		if prev.AllocID == allocID {
+			if prev.Healthy {
+				i.ControllersHealthy -= 1
+			}
+			delete(i.Controllers, nodeID)
+		}
+	}
+
+	return nil
+}
+
+func (i *IngressPlugin) AddJob(job *Job, summary *JobSummary) {
+	i.UpdateExpectedWithJob(job, summary, false)
+}
+
+func (i *IngressPlugin) DeleteJob(job *Job, summary *JobSummary) {
+	i.UpdateExpectedWithJob(job, summary, true)
+}
+
+func (i *IngressPlugin) UpdateExpectedWithJob(job *Job, summary *JobSummary, terminal bool) {
+	var count int
+
+	for _, tg := range job.TaskGroups {
+		if job.Type == JobTypeSystem {
+			if summary == nil {
+				continue
+			}
+
+			s, ok := summary.Summary[tg.Name]
+			if !ok {
+				continue
+			}
+
+			count = s.Running + s.Queued + s.Starting
+		} else {
+			count = tg.Count
+		}
+
+		for _, t := range tg.Tasks {
+			if t.IngressPluginConfig == nil ||
+				t.IngressPluginConfig.ID != i.ID {
+				continue
+			}
+
+			if terminal {
+				i.ControllerJobs.Delete(job)
+			} else {
+				i.ControllerJobs.Add(job, count)
+			}
+		}
+	}
+
+	i.ControllersExpected = i.ControllerJobs.Count()
+}
+
+type IngressPluginDeleteRequest struct {
+	ID string
+	QueryOptions
+}
+
+type IngressPluginDeleteResponse struct {
+	QueryMeta
 }

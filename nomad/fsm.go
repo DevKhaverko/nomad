@@ -65,7 +65,7 @@ const (
 	ACLAuthMethodSnapshot                SnapshotType = 26
 	ACLBindingRuleSnapshot               SnapshotType = 27
 	NodePoolSnapshot                     SnapshotType = 28
-
+	IngressPluginSnapShot                SnapshotType = 29
 	// Namespace appliers were moved from enterprise and therefore start at 64
 	NamespaceSnapshot SnapshotType = 64
 )
@@ -310,6 +310,8 @@ func (n *nomadFSM) Apply(log *raft.Log) interface{} {
 		return n.applyCSIVolumeBatchClaim(buf[1:], log.Index)
 	case structs.CSIPluginDeleteRequestType:
 		return n.applyCSIPluginDelete(buf[1:], log.Index)
+	case structs.IngressPluginDeleteRequestType:
+		return n.applyIngressPluginDelete(buf[1:], log.Index)
 	case structs.NamespaceUpsertRequestType:
 		return n.applyNamespaceUpsert(buf[1:], log.Index)
 	case structs.NamespaceDeleteRequestType:
@@ -1430,6 +1432,23 @@ func (n *nomadFSM) applyCSIPluginDelete(buf []byte, index uint64) interface{} {
 	return nil
 }
 
+func (n *nomadFSM) applyIngressPluginDelete(buf []byte, index uint64) interface{} {
+	var req structs.IngressPluginDeleteRequest
+	if err := structs.Decode(buf, &req); err != nil {
+		panic(fmt.Errorf("failed to decode request: %v", err))
+	}
+
+	if err := n.state.DeleteIngressPlugin(index, req.ID); err != nil {
+		// "plugin in use" is an error for the state store but not for typical
+		// callers, so reduce log noise by not logging that case here
+		if err.Error() != "plugin in use" {
+			n.logger.Error("DeleteIngressPlugin failed", "error", err)
+		}
+		return err
+	}
+	return nil
+}
+
 // applyNamespaceUpsert is used to upsert a set of namespaces
 func (n *nomadFSM) applyNamespaceUpsert(buf []byte, index uint64) interface{} {
 	defer metrics.MeasureSince([]string{"nomad", "fsm", "apply_namespace_upsert"}, time.Now())
@@ -1760,6 +1779,16 @@ func (n *nomadFSM) restoreImpl(old io.ReadCloser, filter *FSMFilter) error {
 			}
 			if filter.Include(plugin) {
 				if err := restore.CSIPluginRestore(plugin); err != nil {
+					return err
+				}
+			}
+		case IngressPluginSnapShot:
+			plugin := new(structs.IngressPlugin)
+			if err := dec.Decode(plugin); err != nil {
+				return err
+			}
+			if filter.Include(plugin) {
+				if err := restore.IngressPluginRestore(plugin); err != nil {
 					return err
 				}
 			}
@@ -2394,6 +2423,10 @@ func (s *nomadSnapshot) Persist(sink raft.SnapshotSink) error {
 		sink.Cancel()
 		return err
 	}
+	if err := s.persistIngressPlugins(sink, encoder); err != nil {
+		sink.Cancel()
+		return err
+	}
 	if err := s.persistCSIVolumes(sink, encoder); err != nil {
 		sink.Cancel()
 		return err
@@ -2966,6 +2999,34 @@ func (s *nomadSnapshot) persistCSIPlugins(sink raft.SnapshotSink,
 
 		// Write out a plugin snapshot
 		sink.Write([]byte{byte(CSIPluginSnapshot)})
+		if err := encoder.Encode(plugin); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *nomadSnapshot) persistIngressPlugins(sink raft.SnapshotSink,
+	encoder *codec.Encoder) error {
+
+	ws := memdb.NewWatchSet()
+	plugins, err := s.snap.IngressPlugins(ws)
+	if err != nil {
+		return err
+	}
+
+	for {
+		// Get the next item
+		raw := plugins.Next()
+		if raw == nil {
+			break
+		}
+
+		// Prepare the request struct
+		plugin := raw.(*structs.IngressPlugin)
+
+		// Write out a plugin snapshot
+		sink.Write([]byte{byte(IndexSnapshot)})
 		if err := encoder.Encode(plugin); err != nil {
 			return err
 		}

@@ -1002,6 +1002,9 @@ func upsertNodeTxn(txn *txn, index uint64, node *structs.Node) error {
 	if err := upsertCSIPluginsForNode(txn, node, index); err != nil {
 		return fmt.Errorf("csi plugin update failed: %v", err)
 	}
+	if err := upsertIngressPluginsForNode(txn, node, index); err != nil {
+		return fmt.Errorf("ingress plugin update failed: %v", err)
+	}
 
 	return nil
 }
@@ -1040,6 +1043,9 @@ func deleteNodeTxn(txn *txn, index uint64, nodes []string) error {
 		node := existing.(*structs.Node)
 		if err := deleteNodeCSIPlugins(txn, node, index); err != nil {
 			return fmt.Errorf("csi plugin delete failed: %v", err)
+		}
+		if err := deleteNodeIngressPlugins(txn, node, index); err != nil {
+			return fmt.Errorf("ingress plugin delete failed: %v", err)
 		}
 	}
 
@@ -1455,6 +1461,102 @@ func upsertCSIPluginsForNode(txn *txn, node *structs.Node, index uint64) error {
 	return nil
 }
 
+func upsertIngressPluginsForNode(txn *txn, node *structs.Node, index uint64) error {
+	upsertFn := func(info *structs.IngressInfo) error {
+		raw, err := txn.First("ingress_plugins", "id", info.PluginID)
+		if err != nil {
+			return fmt.Errorf("ingress_plugin lookup error: %s %v", info.PluginID, err)
+		}
+
+		var plug *structs.IngressPlugin
+		if raw != nil {
+			plug = raw.(*structs.IngressPlugin).Copy()
+		} else {
+			if !info.Healthy {
+				// we don't want to create new plugins for unhealthy
+				// allocs, otherwise we'd recreate the plugin when we
+				// get the update for the alloc becoming terminal
+				return nil
+			}
+			plug = structs.NewIngressPlugin(info.PluginID, index)
+		}
+
+		// the plugin may have been created by the job being updated, in which case
+		// this data will not be configured, it's only available to the fingerprint
+		// system
+		plug.Provider = info.Provider
+		plug.Version = info.ProviderVersion
+
+		err = plug.AddPlugin(node.ID, info)
+		if err != nil {
+			return err
+		}
+
+		plug.ModifyIndex = index
+
+		err = txn.Insert("ingress_plugins", plug)
+		if err != nil {
+			return fmt.Errorf("ingress_plugins insert error: %v", err)
+		}
+
+		return nil
+	}
+
+	inUseController := map[string]struct{}{}
+
+	for _, info := range node.IngressPlugins {
+		err := upsertFn(info)
+		if err != nil {
+			return err
+		}
+		inUseController[info.PluginID] = struct{}{}
+	}
+
+	// remove the client node from any plugin that's not
+	// running on it.
+	iter, err := txn.Get("ingress_plugins", "id")
+	if err != nil {
+		return fmt.Errorf("ingress_plugins lookup failed: %v", err)
+	}
+	for {
+		raw := iter.Next()
+		if raw == nil {
+			break
+		}
+		plug, ok := raw.(*structs.IngressPlugin)
+		if !ok {
+			continue
+		}
+		plug = plug.Copy()
+
+		var hadDelete bool
+		if _, ok := inUseController[plug.ID]; !ok {
+			if _, asController := plug.Controllers[node.ID]; asController {
+				err := plug.DeleteNodeForType(node.ID)
+				if err != nil {
+					return err
+				}
+				hadDelete = true
+			}
+		}
+		// we check this flag both for performance and to make sure we
+		// don't delete a plugin when registering a node plugin but
+		// no controller
+		if hadDelete {
+			err = updateOrGCIngressPlugin(index, txn, plug)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := txn.Insert("index", &IndexEntry{"ingress_plugins", index}); err != nil {
+		return fmt.Errorf("index update failed: %v", err)
+	}
+
+	return nil
+}
+
 // deleteNodeCSIPlugins cleans up CSIInfo node health status, called in DeleteNode
 func deleteNodeCSIPlugins(txn *txn, node *structs.Node, index uint64) error {
 	if len(node.CSIControllerPlugins) == 0 && len(node.CSINodePlugins) == 0 {
@@ -1498,6 +1600,45 @@ func deleteNodeCSIPlugins(txn *txn, node *structs.Node, index uint64) error {
 	return nil
 }
 
+func deleteNodeIngressPlugins(txn *txn, node *structs.Node, index uint64) error {
+	if len(node.IngressPlugins) == 0 {
+		return nil
+	}
+
+	names := map[string]struct{}{}
+	for _, info := range node.IngressPlugins {
+		names[info.PluginID] = struct{}{}
+	}
+
+	for id := range names {
+		raw, err := txn.First("ingress_plugins", "id", id)
+		if err != nil {
+			return fmt.Errorf("ingress_plugins lookup error %s: %v", id, err)
+		}
+		if raw == nil {
+			// plugin may have been deregistered but we didn't
+			// update the fingerprint yet
+			continue
+		}
+
+		plug := raw.(*structs.IngressPlugin).Copy()
+		err = plug.DeleteNodeForType(node.ID)
+		if err != nil {
+			return err
+		}
+		err = updateOrGCIngressPlugin(index, txn, plug)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := txn.Insert("index", &IndexEntry{"ingress_plugins", index}); err != nil {
+		return fmt.Errorf("index update failed: %v", err)
+	}
+
+	return nil
+}
+
 // updateOrGCPlugin updates a plugin but will delete it if the plugin is empty
 func updateOrGCPlugin(index uint64, txn Txn, plug *structs.CSIPlugin) error {
 	if plug.IsEmpty() {
@@ -1510,6 +1651,22 @@ func updateOrGCPlugin(index uint64, txn Txn, plug *structs.CSIPlugin) error {
 		err := txn.Insert("csi_plugins", plug)
 		if err != nil {
 			return fmt.Errorf("csi_plugins update error %s: %v", plug.ID, err)
+		}
+	}
+	return nil
+}
+
+func updateOrGCIngressPlugin(index uint64, txn Txn, plug *structs.IngressPlugin) error {
+	if plug.IsEmpty() {
+		err := txn.Delete("ingress_plugins", plug)
+		if err != nil {
+			return fmt.Errorf("ingress_plugins delete error: %v", err)
+		}
+	} else {
+		plug.ModifyIndex = index
+		err := txn.Insert("ingress_plugins", plug)
+		if err != nil {
+			return fmt.Errorf("ingress_plugins update error %s: %v", plug.ID, err)
 		}
 	}
 	return nil
@@ -1542,13 +1699,18 @@ func (s *StateStore) deleteJobFromPlugins(index uint64, txn Txn, job *structs.Jo
 		tg := a.Job.LookupTaskGroup(a.TaskGroup)
 		found[tg.Name] = struct{}{}
 		for _, t := range tg.Tasks {
-			if t.CSIPluginConfig == nil {
-				continue
+			if t.CSIPluginConfig != nil {
+				plugAllocs = append(plugAllocs, &pair{
+					pluginID: t.CSIPluginConfig.ID,
+					alloc:    a,
+				})
 			}
-			plugAllocs = append(plugAllocs, &pair{
-				pluginID: t.CSIPluginConfig.ID,
-				alloc:    a,
-			})
+			if t.IngressPluginConfig != nil {
+				plugAllocs = append(plugAllocs, &pair{
+					pluginID: t.IngressPluginConfig.ID,
+					alloc:    a,
+				})
+			}
 		}
 	}
 
@@ -1559,12 +1721,16 @@ func (s *StateStore) deleteJobFromPlugins(index uint64, txn Txn, job *structs.Jo
 		}
 
 		for _, t := range tg.Tasks {
-			if t.CSIPluginConfig == nil {
-				continue
+			if t.CSIPluginConfig != nil {
+				plugAllocs = append(plugAllocs, &pair{
+					pluginID: t.CSIPluginConfig.ID,
+				})
 			}
-			plugAllocs = append(plugAllocs, &pair{
-				pluginID: t.CSIPluginConfig.ID,
-			})
+			if t.IngressPluginConfig != nil {
+				plugAllocs = append(plugAllocs, &pair{
+					pluginID: t.IngressPluginConfig.ID,
+				})
+			}
 		}
 	}
 
@@ -1607,6 +1773,49 @@ func (s *StateStore) deleteJobFromPlugins(index uint64, txn Txn, job *structs.Jo
 
 	if len(plugins) > 0 {
 		if err = txn.Insert("index", &IndexEntry{"csi_plugins", index}); err != nil {
+			return fmt.Errorf("index update failed: %v", err)
+		}
+	}
+
+	ingressPlugins := map[string]*structs.IngressPlugin{}
+
+	for _, x := range plugAllocs {
+		plug, ok := ingressPlugins[x.pluginID]
+
+		if !ok {
+			plug, err = s.IngressPluginByIDTxn(txn, nil, x.pluginID)
+			if err != nil {
+				return fmt.Errorf("error getting plugin: %s, %v", x.pluginID, err)
+			}
+			if plug == nil {
+				// plugin was never successfully registered or has been
+				// GC'd out from under us
+				continue
+			}
+			// only copy once, so we update the same plugin on each alloc
+			ingressPlugins[x.pluginID] = plug.Copy()
+			plug = ingressPlugins[x.pluginID]
+		}
+
+		if x.alloc == nil {
+			continue
+		}
+		err := plug.DeleteAlloc(x.alloc.ID, x.alloc.NodeID)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, plug := range ingressPlugins {
+		plug.DeleteJob(job, summary)
+		err = updateOrGCIngressPlugin(index, txn, plug)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(ingressPlugins) > 0 {
+		if err = txn.Insert("index", &IndexEntry{"ingress_plugins", index}); err != nil {
 			return fmt.Errorf("index update failed: %v", err)
 		}
 	}
@@ -1794,6 +2003,10 @@ func (s *StateStore) upsertJobImpl(index uint64, sub *structs.JobSubmission, job
 
 	if err := s.updateJobCSIPlugins(index, job, existingJob, txn); err != nil {
 		return fmt.Errorf("unable to update job csi plugins: %v", err)
+	}
+
+	if err := s.updateJobIngressPlugins(index, job, existingJob, txn); err != nil {
+		return fmt.Errorf("unable to update job ingress plugins: %v", err)
 	}
 
 	if err := s.updateJobSubmission(index, sub, job.Namespace, job.ID, job.Version, txn); err != nil {
@@ -2928,6 +3141,20 @@ func (s *StateStore) CSIPlugins(ws memdb.WatchSet) (memdb.ResultIterator, error)
 	return iter, nil
 }
 
+func (s *StateStore) IngressPlugins(ws memdb.WatchSet) (memdb.ResultIterator, error) {
+	txn := s.db.ReadTxn()
+	defer txn.Abort()
+
+	iter, err := txn.Get("ingress_plugins", "id")
+	if err != nil {
+		return nil, fmt.Errorf("ingress_plugins lookup failed: %v", err)
+	}
+
+	ws.Add(iter.WatchCh())
+
+	return iter, nil
+}
+
 // CSIPluginsByIDPrefix supports search
 func (s *StateStore) CSIPluginsByIDPrefix(ws memdb.WatchSet, pluginID string) (memdb.ResultIterator, error) {
 	txn := s.db.ReadTxn()
@@ -2965,6 +3192,21 @@ func (s *StateStore) CSIPluginByIDTxn(txn Txn, ws memdb.WatchSet, id string) (*s
 
 	if obj != nil {
 		return obj.(*structs.CSIPlugin), nil
+	}
+	return nil, nil
+}
+
+func (s *StateStore) IngressPluginByIDTxn(txn Txn, ws memdb.WatchSet, id string) (*structs.IngressPlugin, error) {
+
+	watchCh, obj, err := txn.FirstWatch("ingress_plugins", "id", id)
+	if err != nil {
+		return nil, fmt.Errorf("ingress_plugin lookup failed: %s %v", id, err)
+	}
+
+	ws.Add(watchCh)
+
+	if obj != nil {
+		return obj.(*structs.IngressPlugin), nil
 	}
 	return nil, nil
 }
@@ -3058,6 +3300,30 @@ func (s *StateStore) DeleteCSIPlugin(index uint64, id string) error {
 	err = txn.Delete("csi_plugins", plug)
 	if err != nil {
 		return fmt.Errorf("csi_plugins delete error: %v", err)
+	}
+	return txn.Commit()
+}
+
+func (s *StateStore) DeleteIngressPlugin(index uint64, id string) error {
+	txn := s.db.WriteTxn(index)
+	defer txn.Abort()
+
+	plug, err := s.IngressPluginByIDTxn(txn, nil, id)
+	if err != nil {
+		return err
+	}
+
+	if plug == nil {
+		return nil
+	}
+
+	if !plug.IsEmpty() {
+		return fmt.Errorf("plugin in use")
+	}
+
+	err = txn.Delete("ingress_plugins", plug)
+	if err != nil {
+		return fmt.Errorf("ingress_plugins delete error: %v", err)
 	}
 	return txn.Commit()
 }
@@ -3845,7 +4111,9 @@ func (s *StateStore) nestedUpdateAllocFromClient(txn *txn, index uint64, alloc *
 	if err := s.updatePluginForTerminalAlloc(index, copyAlloc, txn); err != nil {
 		return err
 	}
-
+	if err := s.updateIngressPluginForTerminalAlloc(index, copyAlloc, txn); err != nil {
+		return err
+	}
 	// Update the allocation
 	if err := txn.Insert("allocs", copyAlloc); err != nil {
 		return fmt.Errorf("alloc insert failed: %v", err)
@@ -3975,6 +4243,9 @@ func (s *StateStore) upsertAllocsImpl(index uint64, allocs []*structs.Allocation
 		}
 
 		if err := s.updatePluginForTerminalAlloc(index, alloc, txn); err != nil {
+			return err
+		}
+		if err := s.updateIngressPluginForTerminalAlloc(index, alloc, txn); err != nil {
 			return err
 		}
 
@@ -5621,6 +5892,68 @@ func (s *StateStore) updateJobCSIPlugins(index uint64, job, prev *structs.Job, t
 	return nil
 }
 
+func (s *StateStore) updateJobIngressPlugins(index uint64, job, prev *structs.Job, txn *txn) error {
+	plugIns := make(map[string]*structs.IngressPlugin)
+
+	upsertFn := func(job *structs.Job, delete bool) error {
+		for _, tg := range job.TaskGroups {
+			for _, t := range tg.Tasks {
+				if t.IngressPluginConfig == nil {
+					continue
+				}
+
+				plugIn, ok := plugIns[t.IngressPluginConfig.ID]
+				if !ok {
+					p, err := s.IngressPluginByIDTxn(txn, nil, t.IngressPluginConfig.ID)
+					if err != nil {
+						return err
+					}
+					if p == nil {
+						plugIn = structs.NewIngressPlugin(t.IngressPluginConfig.ID, index)
+					} else {
+						plugIn = p.Copy()
+						plugIn.ModifyIndex = index
+					}
+					plugIns[plugIn.ID] = plugIn
+				}
+
+				if delete {
+					plugIn.DeleteJob(job, nil)
+				} else {
+					plugIn.AddJob(job, nil)
+				}
+			}
+		}
+
+		return nil
+	}
+
+	if prev != nil {
+		err := upsertFn(prev, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	err := upsertFn(job, false)
+	if err != nil {
+		return err
+	}
+
+	for _, plugIn := range plugIns {
+		err = txn.Insert("ingress_plugins", plugIn)
+		if err != nil {
+			return fmt.Errorf("ingress_plugins insert error: %v", err)
+		}
+	}
+
+	if err := txn.Insert("index", &IndexEntry{"ingress_plugins", index}); err != nil {
+		return fmt.Errorf("index update failed: %v", err)
+	}
+
+	return nil
+}
+
 // updateDeploymentWithAlloc is used to update the deployment state associated
 // with the given allocation. The passed alloc may be updated if the deployment
 // status has changed to capture the modify index at which it has changed.
@@ -5839,7 +6172,7 @@ func (s *StateStore) updateSummaryWithAlloc(index uint64, alloc *structs.Allocat
 		jobSummary.ModifyIndex = index
 
 		s.updatePluginWithJobSummary(index, jobSummary, alloc, txn)
-
+		s.updateIngressPluginWithJobSummary(index, jobSummary, alloc, txn)
 		// Update the indexes table for job summary
 		if err := txn.Insert("index", &IndexEntry{"job_summary", index}); err != nil {
 			return fmt.Errorf("index update failed: %v", err)
@@ -5890,6 +6223,41 @@ func (s *StateStore) updatePluginForTerminalAlloc(index uint64, alloc *structs.A
 	return nil
 }
 
+func (s *StateStore) updateIngressPluginForTerminalAlloc(index uint64, alloc *structs.Allocation,
+	txn *txn) error {
+
+	if !alloc.ServerTerminalStatus() {
+		return nil
+	}
+
+	tg := alloc.Job.LookupTaskGroup(alloc.TaskGroup)
+	for _, t := range tg.Tasks {
+		if t.IngressPluginConfig != nil {
+			pluginID := t.IngressPluginConfig.ID
+			plug, err := s.IngressPluginByIDTxn(txn, nil, pluginID)
+			if err != nil {
+				return err
+			}
+			if plug == nil {
+				// plugin may not have been created because it never
+				// became healthy, just move on
+				return nil
+			}
+			plug = plug.Copy()
+			err = plug.DeleteAlloc(alloc.ID, alloc.NodeID)
+			if err != nil {
+				return err
+			}
+			err = updateOrGCIngressPlugin(index, txn, plug)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 // updatePluginWithJobSummary updates the CSI plugins for a job when the
 // job summary is updated by an alloc
 func (s *StateStore) updatePluginWithJobSummary(index uint64, summary *structs.JobSummary, alloc *structs.Allocation,
@@ -5917,6 +6285,40 @@ func (s *StateStore) updatePluginWithJobSummary(index uint64, summary *structs.J
 				alloc.Job.Status == structs.JobStatusDead)
 
 			err = updateOrGCPlugin(index, txn, plug)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *StateStore) updateIngressPluginWithJobSummary(index uint64, summary *structs.JobSummary, alloc *structs.Allocation,
+	txn *txn) error {
+
+	tg := alloc.Job.LookupTaskGroup(alloc.TaskGroup)
+	if tg == nil {
+		return nil
+	}
+
+	for _, t := range tg.Tasks {
+		if t.IngressPluginConfig != nil {
+			pluginID := t.IngressPluginConfig.ID
+			plug, err := s.IngressPluginByIDTxn(txn, nil, pluginID)
+			if err != nil {
+				return err
+			}
+			if plug == nil {
+				plug = structs.NewIngressPlugin(pluginID, index)
+			} else {
+				plug = plug.Copy()
+			}
+
+			plug.UpdateExpectedWithJob(alloc.Job, summary,
+				alloc.Job.Status == structs.JobStatusDead)
+
+			err = updateOrGCIngressPlugin(index, txn, plug)
 			if err != nil {
 				return err
 			}

@@ -128,7 +128,7 @@ const (
 	ACLBindingRulesDeleteRequestType             MessageType = 58
 	NodePoolUpsertRequestType                    MessageType = 59
 	NodePoolDeleteRequestType                    MessageType = 60
-
+	IngressPluginDeleteRequestType               MessageType = 61
 	// Namespace types were moved from enterprise and therefore start at 64
 	NamespaceUpsertRequestType MessageType = 64
 	NamespaceDeleteRequestType MessageType = 65
@@ -2172,6 +2172,7 @@ type Node struct {
 	// CSINodePlugins is a map of plugin names to current CSI Plugin info
 	CSINodePlugins map[string]*CSIInfo
 
+	IngressPlugins map[string]*IngressInfo
 	// HostVolumes is a map of host volume names to their configuration
 	HostVolumes map[string]*ClientHostVolumeConfig
 

@@ -1499,6 +1499,9 @@ func (c *Client) setupNode() error {
 	if node.CSINodePlugins == nil {
 		node.CSINodePlugins = make(map[string]*structs.CSIInfo)
 	}
+	if node.IngressPlugins == nil {
+		node.IngressPlugins = make(map[string]*structs.IngressInfo)
+	}
 	if node.Meta == nil {
 		node.Meta = make(map[string]string)
 	}

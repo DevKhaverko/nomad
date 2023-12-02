@@ -303,6 +303,49 @@ func (c *CSIInfo) IsNode() bool {
 	return true
 }
 
+type IngressInfo struct {
+	PluginID          string
+	AllocID           string
+	Healthy           bool
+	HealthDescription string
+	UpdateTime        time.Time
+
+	Provider        string
+	ProviderVersion string
+}
+
+func (i *IngressInfo) Copy() *IngressInfo {
+	if i == nil {
+		return nil
+	}
+
+	nc := new(IngressInfo)
+	*nc = *i
+	return nc
+}
+
+func (i *IngressInfo) SetHealthy(hs bool) {
+	i.Healthy = hs
+	if hs {
+		i.HealthDescription = "healthy"
+	} else {
+		i.HealthDescription = "unhealthy"
+	}
+}
+
+func (i *IngressInfo) Equal(o *IngressInfo) bool {
+	if i == nil && o == nil {
+		return i == o
+	}
+
+	nc := *i
+	nc.UpdateTime = time.Time{}
+	no := *o
+	no.UpdateTime = time.Time{}
+
+	return reflect.DeepEqual(nc, no)
+}
+
 // DriverInfo is the current state of a single driver. This is updated
 // regularly as driver health changes on the node.
 type DriverInfo struct {

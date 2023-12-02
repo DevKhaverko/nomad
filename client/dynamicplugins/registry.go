@@ -20,6 +20,7 @@ import (
 const (
 	PluginTypeCSIController = "csi-controller"
 	PluginTypeCSINode       = "csi-node"
+	PluginTypeIngress       = "ingress"
 )
 
 // Registry is an interface that allows for the dynamic registration of plugins

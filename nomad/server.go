@@ -1303,6 +1303,7 @@ func (s *Server) setupRpcServer(server *rpc.Server, ctx *RPCContext) {
 	_ = server.Register(NewClientCSIEndpoint(s, ctx))
 	_ = server.Register(NewCSIVolumeEndpoint(s, ctx))
 	_ = server.Register(NewCSIPluginEndpoint(s, ctx))
+	_ = server.Register(NewIngressPluginEndpoint(s, ctx))
 	_ = server.Register(NewDeploymentEndpoint(s, ctx))
 	_ = server.Register(NewEvalEndpoint(s, ctx))
 	_ = server.Register(NewJobEndpoints(s, ctx))

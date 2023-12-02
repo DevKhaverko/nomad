@@ -113,13 +113,12 @@ func (i *ingressPluginSupervisorHook) Prestart(
 
 func (i *ingressPluginSupervisorHook) setSocketHook() {
 	pluginInfo, err := i.runner.dynamicRegistry.PluginForAlloc(
-		string(i.task.IngressPluginConfig.Class),
+		dynamicplugins.PluginTypeIngress,
 		i.task.IngressPluginConfig.ID,
 		i.alloc.ID,
 	)
 	if err != nil {
-		i.logger.Error("", err)
-		os.Exit(1)
+		i.logger.Error("plugin err", err)
 	}
 	if pluginInfo != nil && pluginInfo.ConnectionInfo.SocketPath != "" {
 		i.socketPath = pluginInfo.ConnectionInfo.SocketPath
@@ -283,7 +282,6 @@ func (i *ingressPluginSupervisorHook) registerPlugin(client ingress.IngressPlugi
 	}, nil
 }
 
-// TODO add logic check health once
 func (i *ingressPluginSupervisorHook) supervisorLoopOnce(ctx context.Context, client ingress.IngressPlugin) (bool, error) {
 	probeCtx, probeCancelFn := context.WithTimeout(ctx, 5*time.Second)
 	defer probeCancelFn()

@@ -60,16 +60,13 @@ job "example" {
       driver = "raw_exec"
       config {
         command = "sleep"
-        args    = ["infinity"]
+        args    = ["10000"]
       }
       ingress_plugin {
        	id = "test"
         nomad_endpoint = "test"
         nomad_token = "test"
         class = "internal"
-        internal {
-        	lb_conf_path = "/test" 
-        }
       }
       resources {
         cpu    = 10

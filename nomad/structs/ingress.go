@@ -10,6 +10,7 @@ const (
 	InternalIngressClass IngressClass = "internal"
 	// ExternalIngressClass indicates that load balancer is outside nomad cluster
 	ExternalIngressClass IngressClass = "external"
+	IngressSocketName                 = "ingress.sock"
 )
 
 // TaskIngressPluginConfig contains the data that is required to setup a task as a

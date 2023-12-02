@@ -50,3 +50,32 @@ IngressPluginConfig {
 8. Полученная конфигурация записывается в файл на ноде, где располагается балансировщик
 
 # Как запустить кластер с Ingress и Ingress controller
+
+
+```
+job "example" {
+
+  group "group1" {
+    task "sleep" {
+      driver = "raw_exec"
+      config {
+        command = "sleep"
+        args    = ["infinity"]
+      }
+      ingress_plugin {
+       	id = "test"
+        nomad_endpoint = "test"
+        nomad_token = "test"
+        class = "internal"
+        internal {
+        	lb_conf_path = "/test" 
+        }
+      }
+      resources {
+        cpu    = 10
+        memory = 10
+      }
+    }
+  }
+}
+```

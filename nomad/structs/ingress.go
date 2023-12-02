@@ -245,3 +245,32 @@ type IngressPluginDeleteRequest struct {
 type IngressPluginDeleteResponse struct {
 	QueryMeta
 }
+
+type IngressPluginListRequest struct {
+	QueryOptions
+}
+
+type IngressPluginListStub struct {
+	ID                  string
+	Provider            string
+	ControllersHealthy  int
+	ControllersExpected int
+	CreateIndex         uint64
+	ModifyIndex         uint64
+}
+
+func (i *IngressPlugin) Stub() *IngressPluginListStub {
+	return &IngressPluginListStub{
+		ID:                  i.ID,
+		Provider:            i.Provider,
+		ControllersHealthy:  i.ControllersHealthy,
+		ControllersExpected: i.ControllersExpected,
+		CreateIndex:         i.CreateIndex,
+		ModifyIndex:         i.ModifyIndex,
+	}
+}
+
+type IngressPluginListResponse struct {
+	Plugins []*IngressPluginListStub
+	QueryMeta
+}

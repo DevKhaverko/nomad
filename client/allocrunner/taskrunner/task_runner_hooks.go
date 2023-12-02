@@ -94,7 +94,7 @@ func (tr *TaskRunner) initHooks() {
 				events:     tr,
 				runner:     tr,
 				lifecycle:  tr,
-				lbConfPath: task.IngressPluginConfig.Internal.LoadBalancerConfigurationPath,
+				lbConfPath: "task.IngressPluginConfig.Internal.LoadBalancerConfigurationPath",
 				logger:     hookLogger,
 			}),
 		)

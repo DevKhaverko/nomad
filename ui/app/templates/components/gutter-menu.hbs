@@ -74,6 +74,15 @@
             Storage
           </LinkTo>
         </li>
+        <li {{keyboard-shortcut menuLevel=true pattern=(array "g" "r") }}>
+          <LinkTo
+            @route="ingress"
+            @activeClass="is-active"
+            data-test-gutter-link="storage"
+          >
+            Ingress
+          </LinkTo>
+        </li>
         {{#if (can "list variables")}}
         <li {{keyboard-shortcut menuLevel=true pattern=(array "g" "v") }}>
           <LinkTo

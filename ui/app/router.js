@@ -72,6 +72,14 @@ Router.map(function () {
     });
   });
 
+  this.route('ingress', function () {
+    this.route('plugins', function () {
+      this.route('plugin', { path: '/:plugin_name' }, function () {
+        this.route('allocations');
+      });
+    });
+  });
+
   this.route('allocations', function () {
     this.route('allocation', { path: '/:allocation_id' }, function () {
       this.route('fs-root', { path: '/fs' });

@@ -1465,7 +1465,7 @@ func upsertIngressPluginsForNode(txn *txn, node *structs.Node, index uint64) err
 	upsertFn := func(info *structs.IngressInfo) error {
 		raw, err := txn.First("ingress_plugins", "id", info.PluginID)
 		if err != nil {
-			return fmt.Errorf("ingress_plugin lookup error: %s %v", info.PluginID, err)
+			return fmt.Errorf("ingress_plugins lookup error: %s %v", info.PluginID, err)
 		}
 
 		var plug *structs.IngressPlugin
@@ -3180,6 +3180,15 @@ func (s *StateStore) CSIPluginByID(ws memdb.WatchSet, id string) (*structs.CSIPl
 	return plugin, nil
 }
 
+func (s *StateStore) IngressPluginByID(ws memdb.WatchSet, id string) (*structs.IngressPlugin, error) {
+	txn := s.db.ReadTxn()
+	plugin, err := s.IngressPluginByIDTxn(txn, ws, id)
+	if err != nil {
+		return nil, err
+	}
+	return plugin, nil
+}
+
 // CSIPluginByIDTxn returns a named CSIPlugin
 func (s *StateStore) CSIPluginByIDTxn(txn Txn, ws memdb.WatchSet, id string) (*structs.CSIPlugin, error) {
 
@@ -3200,7 +3209,7 @@ func (s *StateStore) IngressPluginByIDTxn(txn Txn, ws memdb.WatchSet, id string)
 
 	watchCh, obj, err := txn.FirstWatch("ingress_plugins", "id", id)
 	if err != nil {
-		return nil, fmt.Errorf("ingress_plugin lookup failed: %s %v", id, err)
+		return nil, fmt.Errorf("csi_plugin lookup failed: %s %v", id, err)
 	}
 
 	ws.Add(watchCh)
@@ -3217,6 +3226,11 @@ func (s *StateStore) CSIPluginDenormalize(ws memdb.WatchSet, plug *structs.CSIPl
 	return s.CSIPluginDenormalizeTxn(txn, ws, plug)
 }
 
+func (s *StateStore) IngressPluginDenormalize(ws memdb.WatchSet, plug *structs.IngressPlugin) (*structs.IngressPlugin, error) {
+	txn := s.db.ReadTxn()
+	return s.IngressPluginDenormalizeTxn(txn, ws, plug)
+}
+
 func (s *StateStore) CSIPluginDenormalizeTxn(txn Txn, ws memdb.WatchSet, plug *structs.CSIPlugin) (*structs.CSIPlugin, error) {
 	if plug == nil {
 		return nil, nil
@@ -3228,6 +3242,34 @@ func (s *StateStore) CSIPluginDenormalizeTxn(txn Txn, ws memdb.WatchSet, plug *s
 		ids[info.AllocID] = struct{}{}
 	}
 	for _, info := range plug.Nodes {
+		ids[info.AllocID] = struct{}{}
+	}
+
+	for id := range ids {
+		alloc, err := s.allocByIDImpl(txn, ws, id)
+		if err != nil {
+			return nil, err
+		}
+		if alloc == nil {
+			continue
+		}
+		plug.Allocations = append(plug.Allocations, alloc.Stub(nil))
+	}
+	sort.Slice(plug.Allocations, func(i, j int) bool {
+		return plug.Allocations[i].ModifyIndex > plug.Allocations[j].ModifyIndex
+	})
+
+	return plug, nil
+}
+
+func (s *StateStore) IngressPluginDenormalizeTxn(txn Txn, ws memdb.WatchSet, plug *structs.IngressPlugin) (*structs.IngressPlugin, error) {
+	if plug == nil {
+		return nil, nil
+	}
+
+	// Get the unique list of allocation ids
+	ids := map[string]struct{}{}
+	for _, info := range plug.Controllers {
 		ids[info.AllocID] = struct{}{}
 	}
 

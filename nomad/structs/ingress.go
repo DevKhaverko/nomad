@@ -274,3 +274,13 @@ type IngressPluginListResponse struct {
 	Plugins []*IngressPluginListStub
 	QueryMeta
 }
+
+type IngressPluginGetRequest struct {
+	ID string
+	QueryOptions
+}
+
+type IngressPluginGetResponse struct {
+	Plugin *IngressPlugin
+	QueryMeta
+}

@@ -6,6 +6,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/nomad/client/pluginmanager/ingressmanager"
 	"sync"
 	"time"
 
@@ -63,6 +64,16 @@ SEND_BATCH:
 		}
 	})
 
+	var ingressChanged bool
+	c.batchNodeUpdates.batchIngressUpdates(func(name string, info *structs.IngressInfo) {
+		if c.updateNodeFromIngressControllerLocked(name, info, newConfig.Node) {
+			if newConfig.Node.CSIControllerPlugins[name].UpdateTime.IsZero() {
+				newConfig.Node.CSIControllerPlugins[name].UpdateTime = time.Now()
+			}
+			ingressChanged = true
+		}
+	})
+
 	// driver node updates
 	var driverChanged bool
 	c.batchNodeUpdates.batchDriverUpdates(func(driver string, info *structs.DriverInfo) {
@@ -85,7 +96,7 @@ SEND_BATCH:
 	})
 
 	// only update the node if changes occurred
-	if driverChanged || devicesChanged || csiChanged {
+	if driverChanged || devicesChanged || csiChanged || ingressChanged {
 		c.config = newConfig
 		c.updateNode()
 	}
@@ -113,6 +124,27 @@ func (c *Client) updateNodeFromCSI(name string, info *structs.CSIInfo) {
 	if c.updateNodeFromCSINodeLocked(name, info, newConfig.Node) {
 		if newConfig.Node.CSINodePlugins[name].UpdateTime.IsZero() {
 			newConfig.Node.CSINodePlugins[name].UpdateTime = time.Now()
+		}
+		changed = true
+	}
+
+	if changed {
+		c.config = newConfig
+		c.updateNode()
+	}
+}
+
+func (c *Client) updateNodeFromIngress(name string, info *structs.IngressInfo) {
+	c.configLock.Lock()
+	defer c.configLock.Unlock()
+
+	newConfig := c.config.Copy()
+
+	changed := false
+
+	if c.updateNodeFromIngressControllerLocked(name, info, newConfig.Node) {
+		if newConfig.Node.IngressPlugins[name].UpdateTime.IsZero() {
+			newConfig.Node.IngressPlugins[name].UpdateTime = time.Now()
 		}
 		changed = true
 	}
@@ -155,6 +187,39 @@ func (c *Client) updateNodeFromCSIControllerLocked(name string, info *structs.CS
 			if i.HealthDescription != "" {
 				event := structs.NewNodeEvent().
 					SetSubsystem("CSI").
+					SetMessage(i.HealthDescription).
+					AddDetail("plugin", name).
+					AddDetail("type", "controller")
+				c.triggerNodeEvent(event)
+			}
+		}
+	}
+
+	return changed
+}
+
+func (c *Client) updateNodeFromIngressControllerLocked(name string, info *structs.IngressInfo, node *structs.Node) bool {
+	var changed bool
+	i := info.Copy()
+
+	oldController, hadController := node.IngressPlugins[name]
+	if !hadController {
+		// If the controller info has not yet been set, do that here
+		changed = true
+		node.IngressPlugins[name] = i
+	} else {
+		// The controller info has already been set, fix it up
+		if !oldController.Equal(i) {
+			node.IngressPlugins[name] = i
+			changed = true
+		}
+
+		// If health state has changed, trigger node event
+		if oldController.Healthy != i.Healthy || oldController.HealthDescription != i.HealthDescription {
+			changed = true
+			if i.HealthDescription != "" {
+				event := structs.NewNodeEvent().
+					SetSubsystem("Ingress").
 					SetMessage(i.HealthDescription).
 					AddDetail("plugin", name).
 					AddDetail("type", "controller")
@@ -336,21 +401,29 @@ type batchNodeUpdates struct {
 	csiBatched           bool
 	csiCB                csimanager.UpdateNodeCSIInfoFunc
 	csiMu                sync.Mutex
+
+	ingressControllerPlugins map[string]*structs.IngressInfo
+	ingressBatched           bool
+	ingressCB                ingressmanager.UpdateIngressInfoFunc
+	ingressMu                sync.Mutex
 }
 
 func newBatchNodeUpdates(
 	driverCB drivermanager.UpdateNodeDriverInfoFn,
 	devicesCB devicemanager.UpdateNodeDevicesFn,
-	csiCB csimanager.UpdateNodeCSIInfoFunc) *batchNodeUpdates {
+	csiCB csimanager.UpdateNodeCSIInfoFunc,
+	ingressCB ingressmanager.UpdateIngressInfoFunc) *batchNodeUpdates {
 
 	return &batchNodeUpdates{
-		drivers:              make(map[string]*structs.DriverInfo),
-		driverCB:             driverCB,
-		devices:              []*structs.NodeDeviceResource{},
-		devicesCB:            devicesCB,
-		csiNodePlugins:       make(map[string]*structs.CSIInfo),
-		csiControllerPlugins: make(map[string]*structs.CSIInfo),
-		csiCB:                csiCB,
+		drivers:                  make(map[string]*structs.DriverInfo),
+		driverCB:                 driverCB,
+		devices:                  []*structs.NodeDeviceResource{},
+		devicesCB:                devicesCB,
+		csiNodePlugins:           make(map[string]*structs.CSIInfo),
+		csiControllerPlugins:     make(map[string]*structs.CSIInfo),
+		csiCB:                    csiCB,
+		ingressControllerPlugins: make(map[string]*structs.IngressInfo),
+		ingressCB:                ingressCB,
 	}
 }
 
@@ -375,6 +448,15 @@ func (b *batchNodeUpdates) updateNodeFromCSI(plugin string, info *structs.CSIInf
 	}
 }
 
+func (b *batchNodeUpdates) updateNodeFromIngress(plugin string, info *structs.IngressInfo) {
+	b.ingressMu.Lock()
+	defer b.ingressMu.Unlock()
+	if b.ingressBatched {
+		b.ingressCB(plugin, info)
+		return
+	}
+}
+
 // batchCSIUpdates sends all of the batched CSI updates by calling f  for each
 // plugin batched
 func (b *batchNodeUpdates) batchCSIUpdates(f csimanager.UpdateNodeCSIInfoFunc) error {
@@ -389,6 +471,20 @@ func (b *batchNodeUpdates) batchCSIUpdates(f csimanager.UpdateNodeCSIInfoFunc) e
 		f(plugin, info)
 	}
 	for plugin, info := range b.csiControllerPlugins {
+		f(plugin, info)
+	}
+	return nil
+}
+
+func (b *batchNodeUpdates) batchIngressUpdates(f ingressmanager.UpdateIngressInfoFunc) error {
+	b.ingressMu.Lock()
+	defer b.ingressMu.Unlock()
+	if b.ingressBatched {
+		return fmt.Errorf("ingress updates already batched")
+	}
+
+	b.ingressBatched = true
+	for plugin, info := range b.ingressControllerPlugins {
 		f(plugin, info)
 	}
 	return nil

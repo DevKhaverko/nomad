@@ -6,6 +6,8 @@ package client
 import (
 	"errors"
 	"fmt"
+	"github.com/hashicorp/nomad/client/pluginmanager/ingressmanager"
+	"github.com/hashicorp/nomad/plugins/ingress"
 	"net"
 	"net/rpc"
 	"os"
@@ -289,6 +291,8 @@ type Client struct {
 	// csimanager is responsible for managing csi plugins.
 	csimanager csimanager.Manager
 
+	ingressmanager ingressmanager.Manager
+
 	// devicemanger is responsible for managing device plugins.
 	devicemanager devicemanager.Manager
 
@@ -411,6 +415,7 @@ func NewClient(cfg *config.Config, consulCatalog consul.CatalogAPI, consulProxie
 		c.updateNodeFromDriver,
 		c.updateNodeFromDevices,
 		c.updateNodeFromCSI,
+		c.updateNodeFromIngress,
 	)
 
 	// Initialize the server manager
@@ -432,6 +437,9 @@ func NewClient(cfg *config.Config, consulCatalog consul.CatalogAPI, consulProxie
 			},
 			dynamicplugins.PluginTypeCSINode: func(info *dynamicplugins.PluginInfo) (interface{}, error) {
 				return csi.NewClient(info.ConnectionInfo.SocketPath, logger.Named("csi_client").With("plugin.name", info.Name, "plugin.type", "client")), nil
+			},
+			dynamicplugins.PluginTypeIngress: func(info *dynamicplugins.PluginInfo) (interface{}, error) {
+				return ingress.NewClient(info.ConnectionInfo.SocketPath, logger.Named("ingress_client").With("plugin_name", info.Name, "plugin_type", "ingress")), nil
 			},
 		})
 
@@ -497,6 +505,16 @@ func NewClient(cfg *config.Config, consulCatalog consul.CatalogAPI, consulProxie
 	csiManager := csimanager.New(csiConfig)
 	c.csimanager = csiManager
 	c.pluginManagers.RegisterAndRun(csiManager.PluginManager())
+
+	ingressConfig := &ingressmanager.Config{
+		Logger:                logger,
+		DynamicRegistry:       c.dynamicRegistry,
+		UpdateIngressInfoFunc: c.batchNodeUpdates.updateNodeFromIngress,
+		TriggerNodeEvent:      c.triggerNodeEvent,
+	}
+	ingressManager := ingressmanager.New(ingressConfig)
+	c.ingressmanager = ingressManager
+	c.pluginManagers.RegisterAndRun(ingressManager.PluginManager())
 
 	// Setup the driver manager
 	driverConfig := &drivermanager.Config{
